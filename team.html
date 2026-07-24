@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>밤티코인 - 조별 화면</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="apple-touch-icon" href="/icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#FFE8D1">
+</head>
+<body>
+  <div class="header">
+    <div class="badge" id="teamName">조</div>
+    <h1>밤티코인 잔고</h1>
+    <div class="sub" id="dayLabel">거래 준비 중</div>
+  </div>
+  <div class="container">
+    <div class="card">
+      <div class="stat"><span class="label">보유 현금</span><span class="value big" id="balance">-</span></div>
+      <div class="stat"><span class="label">총 자산 평가액</span><span class="value" id="totalValue">-</span></div>
+      <div class="stat"><span class="label">누적 수익률</span><span class="value" id="returnPct">-</span></div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">현재 시세 (매수·매도는 밤티 거래소에서 진행해요)</div>
+      <div id="marketList"></div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">보유 종목</div>
+      <div id="holdingsList"><div class="empty">보유 종목이 없어요</div></div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">받은 정보 카드 (회사별)</div>
+      <div id="infoCardsList"><div class="empty">아직 받은 정보가 없어요</div></div>
+    </div>
+  </div>
+
+  <div class="lightbox" id="lightbox">
+    <span class="lightbox-close">&times;</span>
+    <img id="lightboxImg" src="" alt="">
+  </div>
+
+<script>
+// --- 뒤로가기(가장자리 스와이프) 차단: 같은 화면에 머물게 함 ---
+history.pushState(null, '', location.href);
+window.addEventListener('popstate', function(){ history.pushState(null, '', location.href); });
+
+const params = new URLSearchParams(location.search);
+const teamId = params.get('team') || 't1';
+
+function fmt(n){ return Math.round(n).toLocaleString() + 'BT'; }
+function signed(n){ return (n>=0?'+':'') + Math.round(n).toLocaleString(); }
+
+const openGroups = {};  // companyId -> true if expanded (persists across auto-refresh)
+
+const _sig = {};
+function setHTML(id, html, sig){
+  const key = sig === undefined ? html : sig;
+  if(_sig[id] === key) return;   // unchanged -> don't touch DOM (no flicker, keeps scroll & open state)
+  _sig[id] = key;
+  document.getElementById(id).innerHTML = html;
+}
+
+function openLightbox(src){
+  const lb = document.getElementById('lightbox');
+  document.getElementById('lightboxImg').src = src;
+  lb.classList.add('show');
+}
+document.getElementById('lightbox').onclick = ()=>document.getElementById('lightbox').classList.remove('show');
+
+async function loadAll(){
+  const [state, team, comps] = await Promise.all([
+    fetch('/api/state',{cache:'no-store'}).then(r=>r.json()),
+    fetch('/api/team/'+teamId,{cache:'no-store'}).then(r=>r.json()),
+    fetch('/api/companies',{cache:'no-store'}).then(r=>r.json()),
+  ]);
+  const companies = comps.filter(c=>!c.merged);
+
+  document.getElementById('teamName').textContent = team.name;
+  document.getElementById('dayLabel').textContent = state.day === 0 ? '거래 준비 중' : state.day+'거래일 / 총 '+state.totalDays+'거래일';
+  document.getElementById('balance').textContent = fmt(team.balance);
+  document.getElementById('totalValue').textContent = fmt(team.totalValue);
+  const rp = document.getElementById('returnPct');
+  rp.textContent = (team.returnPct>=0?'+':'')+team.returnPct+'%';
+  rp.style.color = team.returnPct>0 ? '#D9633F' : (team.returnPct<0 ? '#3B7DDB' : '');
+
+  setHTML('marketList', companies.map(c=>{
+    const chg = c.changePct||0;
+    return `<div class="list-item">
+        <div class="name-row">
+          ${c.logo?`<img class="company-logo" src="${c.logo}">`:''}
+          <div><div class="name">${c.name}</div><div class="meta">${fmt(c.price)}</div></div>
+        </div>
+        <span class="${chg>0?'change-up':(chg<0?'change-down':'meta')}">${chg>0?'+':''}${chg}%</span>
+      </div>`;
+  }).join(''));
+
+  if(team.holdings.length===0){
+    setHTML('holdingsList', '<div class="empty">보유 종목이 없어요</div>');
+  } else {
+    setHTML('holdingsList', team.holdings.map(h=>{
+      const pp = h.profitPct||0;
+      const pcls = pp>0?'change-up':(pp<0?'change-down':'meta');
+      return `<div class="list-item">
+        <div class="name-row">
+          ${h.logo?`<img class="company-logo" src="${h.logo}">`:''}
+          <div>
+            <div class="name">${h.name}</div>
+            <div class="meta">${h.qty.toFixed(2)}주 · 평단 ${fmt(h.avgCost)}</div>
+          </div>
+        </div>
+        <div style="text-align:right;">
+          <div class="value">${fmt(h.value)}</div>
+          <div class="${pcls}" style="font-size:13px;font-weight:700;">${pp>=0?'+':''}${pp}% (${signed(h.profitBT)}BT)</div>
+        </div>
+      </div>`;
+    }).join(''));
+  }
+
+  window._lastCards = team.infoCards;
+  renderInfoCards(team.infoCards);
+}
+
+function renderInfoCards(cards){
+  if(!cards || cards.length===0){
+    setHTML('infoCardsList', '<div class="empty">아직 받은 정보가 없어요</div>');
+    return;
+  }
+  // group by company, keep first-seen order; within a company sort by day then level
+  const groups = {};
+  const order = [];
+  cards.forEach(c=>{
+    if(!groups[c.companyId]){ groups[c.companyId] = {name:c.companyName, logo:c.logo, items:[]}; order.push(c.companyId); }
+    groups[c.companyId].items.push(c);
+  });
+  const html = order.map(cid=>{
+    const g = groups[cid];
+    // dedupe: keep highest level per (day) so the richest card shows
+    const uniq = {};
+    g.items.forEach(c=>{ uniq[c.day+'-'+c.level] = c; });  // keep each distinct day+level card
+    const items = Object.values(uniq).sort((a,b)=> (a.day-b.day) || (a.level-b.level));
+    const isOpen = !!openGroups[cid];
+    return `<div class="info-group ${isOpen?'open':''}">
+      <div class="info-group-head" onclick="toggleGroup('${cid}')">
+        ${g.logo?`<img src="${g.logo}" class="info-group-logo">`:''}
+        <span>${g.name}</span>
+        <span class="info-count">${items.length}건</span>
+        <span class="info-chevron">▾</span>
+      </div>
+      <div class="info-group-body">
+        ${items.map(c=>`
+          <div class="info-card">
+            <span class="tag">${c.day}거래일 · ${c.level}단계 · ${c.source==='booth'?'부스':(c.source==='groupgame'?'단체전':'거래소')}</span>
+            ${c.image?`<img src="${c.image}" class="info-img" onclick="openLightbox('${c.image}')">`:''}
+            <div class="headline">${c.headline}</div>
+            ${c.body?`<div class="body">${c.body}</div>`:''}
+          </div>`).join('')}
+      </div>
+    </div>`;
+  }).join('');
+  // signature includes which groups are open, so toggling always re-renders but idle polls don't
+  const sig = html + '::' + Object.keys(openGroups).filter(k=>openGroups[k]).join(',');
+  setHTML('infoCardsList', html, sig);
+}
+
+function toggleGroup(cid){
+  openGroups[cid] = !openGroups[cid];
+  if(window._lastCards) renderInfoCards(window._lastCards);
+}
+
+loadAll();
+setInterval(loadAll, 8000);
+document.addEventListener('visibilitychange', function(){ if(!document.hidden) loadAll(); });
+window.addEventListener('pageshow', function(){ loadAll(); });
+window.addEventListener('focus', function(){ loadAll(); });
+</script>
+</body>
+</html>

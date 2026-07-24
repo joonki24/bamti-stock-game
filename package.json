@@ -1,0 +1,12 @@
+{
+  "name": "bamti-stock-game",
+  "version": "2.0.0",
+  "description": "밤티코인 조별대항 주식",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^5.2.1"
+  }
+}

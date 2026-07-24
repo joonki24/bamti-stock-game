@@ -1,0 +1,11 @@
+{
+  "name": "밤티코인 조별대항 주식",
+  "short_name": "밤티코인",
+  "start_url": "/index.html",
+  "display": "standalone",
+  "background_color": "#FFF9F0",
+  "theme_color": "#FFE8D1",
+  "icons": [
+    { "src": "/icon.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

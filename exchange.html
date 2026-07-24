@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>밤티코인 - 밤티 거래소</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="apple-touch-icon" href="/icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#FFE8D1">
+</head>
+<body>
+  <div id="pinGate" class="pin-gate">
+    <div class="pin-box">
+      <div class="pin-title">스탭 확인</div>
+      <div class="pin-sub">비밀번호를 입력하세요</div>
+      <input type="password" id="pinInput" inputmode="numeric" placeholder="••••" autocomplete="off">
+      <button class="btn" id="pinBtn">확인</button>
+      <div class="pin-err" id="pinErr"></div>
+    </div>
+  </div>
+  <script>
+  // ===== 스탭 화면 비밀번호 (여기 숫자만 바꾸면 됩니다) =====
+  const STAFF_PIN = '2026';
+  // =====================================================
+  (function(){
+    var ok = sessionStorage.getItem('staffAuth') === STAFF_PIN;
+    var gate = document.getElementById('pinGate');
+    if(ok){ gate.style.display='none'; return; }
+    function tryPin(){
+      var v = document.getElementById('pinInput').value;
+      if(v === STAFF_PIN){ sessionStorage.setItem('staffAuth', v); gate.style.display='none'; }
+      else { document.getElementById('pinErr').textContent='비밀번호가 올바르지 않아요'; }
+    }
+    document.getElementById('pinBtn').onclick = tryPin;
+    document.getElementById('pinInput').addEventListener('keydown', function(e){ if(e.key==='Enter') tryPin(); });
+    document.getElementById('pinInput').focus();
+  })();
+  </script>
+
+  <div class="header">
+    <a href="/index.html" class="icon-btn left">🏠</a>
+    <div class="badge">스탭용</div>
+    <h1>밤티 거래소</h1>
+    <div class="sub" id="dayLabel">-</div>
+  </div>
+  <div class="container">
+    <div class="card">
+      <div class="section-title">거래일 진행</div>
+      <div class="stat"><span class="label">현재 거래일</span><span class="value" id="curDay">-</span></div>
+      <div class="stat"><span class="label">합병 상태</span><span class="value" id="mergeStatus">-</span></div>
+      <button class="btn" id="advanceBtn" style="margin-top:10px;"></button>
+      <div style="font-size:12px;color:var(--muted);margin-top:8px;">학생들은 이번 거래일 동안 직전 시세로 거래해요. 버튼을 누르면 이번 거래일 시세가 공개되고 다음 거래일이 시작돼요.</div>
+      <button class="btn danger" id="resetBtn" style="margin-top:14px;">⟲ 전체 초기화 (0거래일로 되돌리기)</button>
+      <div style="font-size:12px;color:var(--muted);margin-top:6px;">모든 조의 잔고·보유종목·정보카드가 처음 상태로 돌아가요. 테스트 데이터를 지울 때만 사용하세요.</div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">매수 · 매도</div>
+      <div class="row" style="margin-bottom:10px;">
+        <select id="teamSelect1"></select>
+        <select id="actionSelect"><option value="buy">매수</option><option value="sell">매도</option></select>
+      </div>
+      <div class="row" style="margin-bottom:10px;">
+        <select id="companySelect1"></select>
+        <input type="number" id="qtyInput" placeholder="수량">
+      </div>
+      <div id="tradeInfo" class="trade-info"></div>
+      <button class="btn secondary" id="tradeBtn" style="margin-top:10px;">거래 실행</button>
+    </div>
+
+    <div class="card">
+      <div class="section-title">BT 지급 · 차감 (선택 사용)</div>
+      <div class="row" style="margin-bottom:10px;">
+        <select id="teamSelect3"></select>
+        <input type="number" id="adjustAmt" placeholder="예: 300 또는 -300">
+      </div>
+      <button class="btn secondary" id="adjustBtn">적용하기</button>
+      <div style="font-size:12px;color:var(--muted);margin-top:8px;">순위 격차 조정 등 상황에 따라 자유 금액으로 지급·차감해요. 팀 화면엔 별도 알림이 뜨지 않으니, 오픈 마이크로 직접 안내해주세요.</div>
+    </div>
+
+    <div class="card" id="groupGameCard" style="display:none;">
+      <div class="section-title">단체 게임 순위 보상 (오늘)</div>
+      <div id="groupGameStatus" style="font-size:13px;color:var(--muted);margin-bottom:10px;"></div>
+      <div id="groupGameRows"></div>
+      <button class="btn" id="groupGameSubmitBtn" style="margin-top:10px;">순위 보상 일괄 지급</button>
+      <div style="font-size:12px;color:var(--muted);margin-top:8px;">순위와 각 조가 받을 정보의 회사를 선택한 뒤 한 번에 지급해요. 지급은 하루에 한 번만 가능해요.</div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">시세 현황</div>
+      <div id="priceList"></div>
+    </div>
+  </div>
+  <div class="toast" id="toast"></div>
+<script>
+let cfg, companies = [];
+let groupRowsRenderedDay = null;   // guard: only render group rows once per day (fixes reset bug)
+function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),1800); }
+function fmt(n){ return Math.round(n).toLocaleString()+'BT'; }
+
+async function loadState(){
+  const [state, comps] = await Promise.all([
+    fetch('/api/state',{cache:'no-store'}).then(r=>r.json()),
+    fetch('/api/companies',{cache:'no-store'}).then(r=>r.json()),
+  ]);
+  document.getElementById('dayLabel').textContent = state.day===0?'거래 시작 전':state.day+'거래일 진행 중';
+  document.getElementById('curDay').textContent = state.day+' / '+state.totalDays;
+  document.getElementById('mergeStatus').textContent = state.merged ? 'SW엔터+JS엔터 → JSW엔터 합병 완료' : '합병 전';
+  const advBtn = document.getElementById('advanceBtn');
+  advBtn.textContent = advanceLabel(state.day, state.totalDays);
+  advBtn.disabled = state.day > state.totalDays;
+
+  companies = comps.filter(c=>!c.merged);
+  const sel = document.getElementById('companySelect1');
+  const cur = sel.value;
+  sel.innerHTML='';
+  companies.forEach(c=>{ const o=document.createElement('option'); o.value=c.id; o.textContent=c.name+' ('+fmt(c.price)+')'; sel.appendChild(o); });
+  if(cur) sel.value = cur;
+
+  const pl = document.getElementById('priceList');
+  pl.innerHTML = comps.map(c=>{
+    const chg = c.changePct||0;
+    return `<div class="list-item">
+        <div class="name-row">
+          ${c.logo?`<img class="company-logo" src="${c.logo}">`:''}
+          <div class="name">${c.name}${c.merged?' <span class=\"pill\">합병됨</span>':''}</div>
+        </div>
+        <div>${fmt(c.price)} <span class="${chg>0?'change-up':(chg<0?'change-down':'meta')}">${chg>0?'+':''}${chg||0}%</span></div>
+      </div>`;
+  }).join('');
+
+  // group game card
+  const ggCard = document.getElementById('groupGameCard');
+  if(state.isGroupGameDay){
+    ggCard.style.display = 'block';
+    if(groupRowsRenderedDay !== state.day){   // render rows ONCE per day, never on subsequent polls
+      renderGroupGameRows(companies);
+      groupRowsRenderedDay = state.day;
+    }
+    loadGroupGameStatus();
+  } else {
+    ggCard.style.display = 'none';
+    groupRowsRenderedDay = null;
+  }
+
+  refreshTradeInfo();
+}
+
+async function loadTeams(){
+  cfg = await fetch('/api/config').then(r=>r.json());
+  ['teamSelect1','teamSelect3'].forEach(id=>{
+    const sel = document.getElementById(id);
+    cfg.teams.forEach((name,i)=>{ const o=document.createElement('option'); o.value='t'+(i+1); o.textContent=name; sel.appendChild(o); });
+  });
+}
+
+// ---- #3: show selected team's cash, max buyable shares (buy) or holdings (sell) ----
+async function refreshTradeInfo(){
+  const teamId = document.getElementById('teamSelect1').value;
+  const companyId = document.getElementById('companySelect1').value;
+  const action = document.getElementById('actionSelect').value;
+  const box = document.getElementById('tradeInfo');
+  if(!teamId){ box.innerHTML=''; return; }
+  const team = await fetch('/api/team/'+teamId).then(r=>r.json());
+  if(team.error){ box.innerHTML=''; return; }
+  const comp = companies.find(c=>c.id===companyId);
+  if(action==='buy'){
+    const price = comp ? comp.price : 0;
+    const maxShares = price>0 ? Math.floor(team.balance / price) : 0;
+    box.innerHTML = `<div class="trade-info-row"><span>보유 현금</span><b>${fmt(team.balance)}</b></div>
+      <div class="trade-info-row"><span>${comp?comp.name:'-'} 최대 매수</span><b>${maxShares}주 <span class="muted-inline">(${fmt(price)}/주)</span></b></div>`;
+  } else {
+    const holds = (team.holdings||[]).filter(h=>h.qty>0);
+    if(holds.length===0){
+      box.innerHTML = `<div class="trade-info-row"><span>보유 현금</span><b>${fmt(team.balance)}</b></div><div class="muted-inline" style="margin-top:6px;">보유 종목이 없어요</div>`;
+    } else {
+      box.innerHTML = `<div class="trade-info-row"><span>보유 현금</span><b>${fmt(team.balance)}</b></div>`
+        + `<div class="muted-inline" style="margin:6px 0 2px;">보유 종목 (매도 가능)</div>`
+        + holds.map(h=>`<div class="trade-info-row hold" data-cid="${h.companyId}"><span>${h.name}</span><b>${h.qty.toFixed(2)}주</b></div>`).join('');
+      box.querySelectorAll('.trade-info-row.hold').forEach(row=>{
+        row.style.cursor='pointer';
+        row.onclick=()=>{ document.getElementById('companySelect1').value=row.dataset.cid; refreshTradeInfo(); };
+      });
+    }
+  }
+}
+
+function renderGroupGameRows(comps){
+  const el = document.getElementById('groupGameRows');
+  el.innerHTML = cfg.teams.map((name,i)=>{
+    const tid = 't'+(i+1);
+    return `<div class="row" style="margin-bottom:8px;align-items:center;">
+      <span style="flex:0 0 44px;font-size:13px;font-weight:700;">${name}</span>
+      <select class="ggRank" data-team="${tid}">
+        ${[1,2,3,4,5,6].map(r=>`<option value="${r}" ${r===i+1?'selected':''}>${r}등</option>`).join('')}
+      </select>
+      <select class="ggCompany" data-team="${tid}">
+        ${comps.map(c=>`<option value="${c.id}">${c.name}</option>`).join('')}
+      </select>
+    </div>`;
+  }).join('');
+}
+
+async function loadGroupGameStatus(){
+  const status = await fetch('/api/groupgame/status').then(r=>r.json());
+  const label = document.getElementById('groupGameStatus');
+  const tierText = status.tiers.map(t=>`${t.rank}등:${t.level}단계+${t.bt}BT`).join(' / ');
+  if(status.done){
+    label.textContent = '오늘 순위 보상은 이미 지급되었습니다.';
+    document.getElementById('groupGameSubmitBtn').disabled = true;
+  } else {
+    label.textContent = '보상표 — ' + tierText;
+    document.getElementById('groupGameSubmitBtn').disabled = false;
+  }
+}
+
+function advanceLabel(day, totalDays){
+  if(day === 0) return '▶ 1거래일 시작하기';
+  if(day > totalDays) return '✅ 게임 종료됨';
+  if(day === totalDays) return '▶ '+day+'거래일 마감 & 최종 시세 공개';
+  return '▶ '+day+'거래일 마감 & 시세 공개 (' + (day+1) + '거래일 시작)';
+}
+
+document.getElementById('advanceBtn').onclick = ()=>{
+  fetch('/api/day/advance', {method:'POST'}).then(r=>r.json()).then(res=>{
+    if(res.error){ toast(res.error); return; }
+    toast(res.revealed ? res.revealedDay+'거래일 시세가 공개되었습니다' : '1거래일이 시작되었습니다');
+    loadState();
+  });
+};
+
+document.getElementById('resetBtn').onclick = ()=>{
+  if(!confirm('정말 전체 초기화할까요?\n모든 조의 잔고·보유종목·정보카드가 사라지고 0거래일로 돌아갑니다.')) return;
+  if(!confirm('다시 한 번 확인할게요. 진짜 초기화할까요? 되돌릴 수 없어요.')) return;
+  fetch('/api/reset', {method:'POST'}).then(r=>r.json()).then(res=>{
+    if(res.error){ toast(res.error); return; }
+    toast('초기화되었습니다'); loadState();
+  });
+};
+
+['teamSelect1','companySelect1','actionSelect'].forEach(id=>{
+  document.getElementById(id).addEventListener('change', refreshTradeInfo);
+});
+
+document.getElementById('tradeBtn').onclick = ()=>{
+  const teamId = document.getElementById('teamSelect1').value;
+  const companyId = document.getElementById('companySelect1').value;
+  const qty = Number(document.getElementById('qtyInput').value);
+  const action = document.getElementById('actionSelect').value;
+  if(!qty || qty<=0){ toast('수량을 입력해주세요'); return; }
+  fetch('/api/trade', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({teamId,companyId,action,qty})})
+    .then(r=>r.json()).then(res=>{
+      if(res.error){ toast(res.error); return; }
+      toast('거래 완료!');
+      document.getElementById('qtyInput').value='';
+      loadState();
+    });
+};
+
+document.getElementById('adjustBtn').onclick = ()=>{
+  const teamId = document.getElementById('teamSelect3').value;
+  const amount = Number(document.getElementById('adjustAmt').value);
+  if(!amount){ toast('금액을 입력해주세요'); return; }
+  fetch('/api/team/adjust', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({teamId, amount})})
+    .then(r=>r.json()).then(res=>{
+      if(res.error){ toast(res.error); return; }
+      toast((amount>0?'+':'')+amount+'BT 적용 완료');
+      document.getElementById('adjustAmt').value=''; refreshTradeInfo();
+    });
+};
+
+document.getElementById('groupGameSubmitBtn').onclick = ()=>{
+  const entries = [...document.querySelectorAll('.ggRank')].map(sel=>{
+    const teamId = sel.dataset.team;
+    const rank = Number(sel.value);
+    const companySel = document.querySelector(`.ggCompany[data-team="${teamId}"]`);
+    return { teamId, rank, companyId: companySel.value };
+  });
+  if(!confirm('입력한 순위대로 전체 조에 보상을 일괄 지급할까요? 되돌릴 수 없어요.')) return;
+  fetch('/api/groupgame/reward', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({entries})})
+    .then(r=>r.json()).then(res=>{
+      if(res.error){ toast(res.error); return; }
+      toast('단체 게임 보상이 지급되었습니다!');
+      loadGroupGameStatus();
+    });
+};
+
+loadTeams().then(loadState);
+setInterval(loadState, 10000);
+document.addEventListener('visibilitychange', function(){ if(!document.hidden) loadState(); });
+window.addEventListener('pageshow', function(){ loadState(); });
+</script>
+</body>
+</html>

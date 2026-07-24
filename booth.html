@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>밤티코인 - 부스 화면</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="apple-touch-icon" href="/icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#FFE8D1">
+</head>
+<body>
+  <div id="pinGate" class="pin-gate">
+    <div class="pin-box">
+      <div class="pin-title">스탭 확인</div>
+      <div class="pin-sub">비밀번호를 입력하세요</div>
+      <input type="password" id="pinInput" inputmode="numeric" placeholder="••••" autocomplete="off">
+      <button class="btn" id="pinBtn">확인</button>
+      <div class="pin-err" id="pinErr"></div>
+    </div>
+  </div>
+  <script>
+  // ===== 스탭 화면 비밀번호 (여기 숫자만 바꾸면 됩니다) =====
+  const STAFF_PIN = '2026';
+  // =====================================================
+  (function(){
+    var ok = sessionStorage.getItem('staffAuth') === STAFF_PIN;
+    var gate = document.getElementById('pinGate');
+    if(ok){ gate.style.display='none'; return; }
+    function tryPin(){
+      var v = document.getElementById('pinInput').value;
+      if(v === STAFF_PIN){ sessionStorage.setItem('staffAuth', v); gate.style.display='none'; }
+      else { document.getElementById('pinErr').textContent='비밀번호가 올바르지 않아요'; }
+    }
+    document.getElementById('pinBtn').onclick = tryPin;
+    document.getElementById('pinInput').addEventListener('keydown', function(e){ if(e.key==='Enter') tryPin(); });
+    document.getElementById('pinInput').focus();
+  })();
+  </script>
+
+  <div class="header">
+    <a href="/index.html" class="icon-btn left">🏠</a>
+    <div class="badge">스탭용</div>
+    <h1>부스 정보 지급</h1>
+    <div class="sub" id="dayLabel">-</div>
+  </div>
+  <div class="container">
+    <div class="card" id="groupGameNotice" style="display:none;">
+      <div class="section-title">오늘은 부스 운영일이 아니에요</div>
+      <div style="font-size:14px;color:var(--muted);">오늘은 단체 게임으로 진행돼요. 순위 보상은 밤티 거래소 화면에서 입력해주세요.</div>
+    </div>
+    <div id="boothForm">
+      <div class="card">
+        <div class="section-title">1. 통과 시도한 조 선택</div>
+        <select id="teamSelect"></select>
+      </div>
+      <div class="card">
+        <div class="section-title">2. 이번 라운드 종목 선택</div>
+        <select id="companySelect"></select>
+      </div>
+      <div class="card">
+        <div class="section-title">3. 도전 레벨 (오늘 남은 횟수)</div>
+        <div class="grid3" id="levelBtns">
+          <div class="level-btn" data-lvl="1">1단계<br><span style="font-weight:400;" id="rem1">-</span></div>
+          <div class="level-btn" data-lvl="2">2단계<br><span style="font-weight:400;" id="rem2">-</span></div>
+          <div class="level-btn" data-lvl="3">3단계<br><span style="font-weight:400;" id="rem3">-</span></div>
+        </div>
+        <div style="font-size:12px;color:var(--muted);margin-top:8px;">성공 시 해당 레벨 정보 카드 + 100BT 지급, 실패해도 시도 횟수는 차감돼요.</div>
+      </div>
+      <div class="row">
+        <button class="btn" id="successBtn">✅ 성공 지급</button>
+        <button class="btn danger" id="failBtn">❌ 실패 처리</button>
+      </div>
+      <div class="card" id="previewCard" style="display:none;margin-top:14px;"></div>
+    </div>
+  </div>
+  <div class="toast" id="toast"></div>
+<script>
+let selectedLevel = 1;
+let companies = [];
+
+function toast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'), 1800);
+}
+
+async function loadRemaining(){
+  const teamId = document.getElementById('teamSelect').value;
+  if(!teamId) return;
+  const res = await fetch('/api/booth/attempts/'+teamId,{cache:'no-store'}).then(r=>r.json());
+  if(res.error) return;
+  [1,2,3].forEach(l=>{
+    document.getElementById('rem'+l).textContent = res.remaining[l]+'/'+res.limits[l]+'회 남음';
+  });
+}
+
+let selectsBuilt = false;
+
+async function init(){
+  const [cfg, comps] = await Promise.all([
+    fetch('/api/config',{cache:'no-store'}).then(r=>r.json()),
+    fetch('/api/companies',{cache:'no-store'}).then(r=>r.json()),
+  ]);
+  const tSel = document.getElementById('teamSelect');
+  cfg.teams.forEach((name,i)=>{
+    const o = document.createElement('option'); o.value = 't'+(i+1); o.textContent = name; tSel.appendChild(o);
+  });
+  companies = comps.filter(c=>!c.merged);
+  const cSel = document.getElementById('companySelect');
+  companies.forEach(c=>{
+    const o = document.createElement('option'); o.value = c.id; o.textContent = c.name; cSel.appendChild(o);
+  });
+  tSel.onchange = loadRemaining;
+  selectsBuilt = true;
+  refreshState();
+}
+
+async function refreshState(){
+  const state = await fetch('/api/state',{cache:'no-store'}).then(r=>r.json());
+  document.getElementById('dayLabel').textContent = state.day===0 ? '거래 시작 전' : state.day+'거래일 진행 중';
+  const isGG = state.isGroupGameDay;
+  document.getElementById('groupGameNotice').style.display = isGG ? 'block' : 'none';
+  document.getElementById('boothForm').style.display = isGG ? 'none' : 'block';
+  if(!isGG && selectsBuilt) loadRemaining();
+}
+document.querySelectorAll('.level-btn').forEach(b=>{
+  b.onclick = ()=>{
+    document.querySelectorAll('.level-btn').forEach(x=>x.classList.remove('selected'));
+    b.classList.add('selected');
+    selectedLevel = Number(b.dataset.lvl);
+  };
+});
+document.querySelector('.level-btn[data-lvl="1"]').classList.add('selected');
+
+function submitAttempt(success){
+  const teamId = document.getElementById('teamSelect').value;
+  const companyId = document.getElementById('companySelect').value;
+  fetch('/api/booth/attempt', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({teamId, companyId, level:selectedLevel, success})})
+    .then(r=>r.json()).then(res=>{
+      if(res.error){ toast(res.error); return; }
+      loadRemaining();
+      const pc = document.getElementById('previewCard');
+      if(!success){
+        toast('실패 처리되었습니다 (시도 1회 차감)');
+        pc.style.display='block';
+        pc.innerHTML = `<div class="section-title">실패 처리됨</div><div style="font-size:14px;color:var(--muted);">보상 없이 시도 횟수만 차감되었어요. 남은 기회가 있으면 다시 도전할 수 있어요.</div>`;
+        return;
+      }
+      toast('지급 완료! (+100BT)');
+      pc.style.display='block';
+      pc.innerHTML = `<div class="section-title">방금 지급된 정보 (+${res.bt}BT)</div>
+        <div class="info-card"><span class="tag">
+          ${res.card.logo?`<img src="${res.card.logo}" style="width:20px;height:20px;object-fit:contain;border-radius:5px;background:#fff;vertical-align:middle;margin-right:4px;">`:''}
+          ${res.card.companyName}</span>
+        ${res.card.image?`<img src="${res.card.image}" style="width:100%;border-radius:12px;margin-bottom:8px;display:block;">`:''}
+        <div class="headline">${res.card.headline}</div>
+        ${res.card.body?`<div class="body">${res.card.body}</div>`:''}</div>`;
+    });
+}
+
+document.getElementById('successBtn').onclick = ()=>submitAttempt(true);
+document.getElementById('failBtn').onclick = ()=>submitAttempt(false);
+
+init();
+setInterval(refreshState, 5000);
+document.addEventListener('visibilitychange', function(){ if(!document.hidden) refreshState(); });
+window.addEventListener('pageshow', function(){ refreshState(); });
+window.addEventListener('focus', function(){ refreshState(); });
+</script>
+</body>
+</html>

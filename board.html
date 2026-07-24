@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>밤티코인 - 공용 전광판</title>
+<link rel="apple-touch-icon" href="/icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#12131A">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Gowun+Dodum&family=Nunito:wght@700;800;900&display=swap');
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  body{
+    background:#12131A; color:#F5F3EE;
+    font-family:'Nunito','Gowun Dodum',sans-serif;
+    min-height:100vh; padding:2.2vw 2.6vw;
+  }
+  .board-head{ display:flex; align-items:center; gap:1.4vw; margin-bottom:1.8vw; }
+  .board-head h1{ font-size:3.4vw; font-weight:900; color:#FFB27A; letter-spacing:-1px; }
+  .board-head .day{ font-size:1.7vw; font-weight:800; color:#9AA0AF; }
+  .grid{ display:grid; grid-template-columns:1.15fr 1fr; gap:2vw; }
+  .panel{ background:#1C1E27; border-radius:20px; padding:1.6vw 1.8vw; }
+  .panel h2{ font-size:1.7vw; color:#FFB27A; margin-bottom:1vw; font-weight:800; }
+  .rank{ display:flex; align-items:center; gap:1.1vw; padding:1vw 0; border-bottom:1px solid #262935; }
+  .rank:last-child{ border-bottom:none; }
+  .rank-num{
+    flex:0 0 3.2vw; height:3.2vw; border-radius:14px; background:#2B2E3C; color:#C7CBD6;
+    display:flex; align-items:center; justify-content:center; font-size:1.8vw; font-weight:900;
+  }
+  .rank.top1 .rank-num{ background:#FFD666; color:#5A4300; }
+  .rank.top2 .rank-num{ background:#D7DAE2; color:#3A3D48; }
+  .rank.top3 .rank-num{ background:#F0B080; color:#5A2E10; }
+  .rank .nm{ flex:1; }
+  .rank .nm .t{ font-size:2vw; font-weight:900; }
+  .rank .nm .v{ font-size:1.25vw; color:#9AA0AF; font-weight:700; }
+  .rank .pct{ font-size:2vw; font-weight:900; }
+  .up{ color:#FF8A5C; } .down{ color:#5FA2FF; } .flat{ color:#9AA0AF; }
+  .price{ display:flex; align-items:center; gap:0.9vw; padding:0.75vw 0; border-bottom:1px solid #262935; }
+  .price:last-child{ border-bottom:none; }
+  .price img{ width:2.5vw; height:2.5vw; object-fit:contain; background:#fff; border-radius:8px; }
+  .price .pn{ flex:1; font-size:1.5vw; font-weight:800; }
+  .price .pp{ font-size:1.5vw; font-weight:900; }
+  .price .chg{ font-size:1.15vw; font-weight:800; margin-left:0.7vw; }
+  .pill{ font-size:0.9vw; background:#2B2E3C; color:#C7CBD6; padding:0.2vw 0.6vw; border-radius:8px; margin-left:0.5vw; }
+  .reveal-btn{ margin-left:auto; font-family:inherit; font-size:1.2vw; font-weight:800; color:#12131A; background:#FFB27A; border:none; border-radius:12px; padding:0.7vw 1.4vw; cursor:pointer; }
+  .reveal-btn:hover{ opacity:.92; }
+  .stage{ position:relative; }
+  .cover{ position:absolute; inset:0; border-radius:20px; background:radial-gradient(ellipse at center,#23202E 0%,#14131C 100%); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1.4vw; z-index:10; text-align:center; }
+  .cover.hidden{ display:none; }
+  .cover .emoji{ font-size:7vw; animation:pulse 1.6s ease-in-out infinite; }
+  .cover .big{ font-size:4vw; font-weight:900; color:#FFB27A; }
+  .cover .sub{ font-size:1.7vw; font-weight:700; color:#9AA0AF; }
+  @keyframes pulse{ 0%,100%{ transform:scale(1);} 50%{ transform:scale(1.12);} }
+</style>
+</head>
+<body>
+  <div class="board-head">
+    <h1>밤티코인 실시간 순위</h1>
+    <div class="day" id="dayLabel">-</div>
+    <button class="reveal-btn" id="revealBtn" onclick="toggleReveal()">👀 순위 공개하기</button>
+  </div>
+  <div class="stage">
+    <div class="grid">
+      <div class="panel">
+        <h2>조별 순위 (누적 수익률)</h2>
+        <div id="rankList"></div>
+      </div>
+      <div class="panel">
+        <h2>실시간 시세</h2>
+        <div id="priceList"></div>
+      </div>
+    </div>
+    <div class="cover" id="cover">
+      <div class="emoji">🥁</div>
+      <div class="big">곧 순위가 공개됩니다!</div>
+      <div class="sub">잠시 후 이번 거래일 결과를 확인하세요</div>
+    </div>
+  </div>
+<script>
+function fmt(n){ return Math.round(n).toLocaleString()+'BT'; }
+let revealed=false;
+function applyReveal(){ document.getElementById('cover').classList.toggle('hidden',revealed); document.getElementById('revealBtn').textContent=revealed?'🙈 순위 가리기':'👀 순위 공개하기'; }
+function toggleReveal(){ revealed=!revealed; applyReveal(); }
+document.addEventListener('keydown',function(e){ if(e.code==='Space'){ e.preventDefault(); toggleReveal(); } });
+applyReveal();
+async function load(){
+  try{
+    const [state, teams, comps] = await Promise.all([
+      fetch('/api/state',{cache:'no-store'}).then(r=>r.json()),
+      fetch('/api/teams',{cache:'no-store'}).then(r=>r.json()),
+      fetch('/api/companies',{cache:'no-store'}).then(r=>r.json()),
+    ]);
+    document.getElementById('dayLabel').textContent = state.day===0?'거래 시작 전':state.day+'거래일 진행 중 (총 '+state.totalDays+'거래일)';
+
+    document.getElementById('rankList').innerHTML = teams.map((t,i)=>{
+      const cls = i===0?'top1':i===1?'top2':i===2?'top3':'';
+      const rp = t.returnPct;
+      const c = rp>0?'up':(rp<0?'down':'flat');
+      return `<div class="rank ${cls}">
+        <div class="rank-num">${i+1}</div>
+        <div class="nm"><div class="t">${t.name}</div><div class="v">${fmt(t.totalValue)}</div></div>
+        <div class="pct ${c}">${rp>=0?'+':''}${rp}%</div>
+      </div>`;
+    }).join('');
+
+    document.getElementById('priceList').innerHTML = comps.map(c=>{
+      const chg = c.changePct||0;
+      const cc = chg>0?'up':(chg<0?'down':'flat');
+      return `<div class="price">
+          ${c.logo?`<img src="${c.logo}">`:''}
+          <div class="pn">${c.name}${c.merged?'<span class="pill">합병됨</span>':''}</div>
+          <div class="pp">${fmt(c.price)}</div>
+          <div class="chg ${cc}">${chg>0?'+':''}${chg||0}%</div>
+        </div>`;
+    }).join('');
+  }catch(e){
+    document.getElementById('dayLabel').textContent = '데이터 연결 대기 중...';
+  }
+}
+load();
+setInterval(load, 6000);
+document.addEventListener('visibilitychange', function(){ if(!document.hidden) load(); });
+window.addEventListener('pageshow', function(){ load(); });
+window.addEventListener('focus', function(){ load(); });
+</script>
+</body>
+</html>
